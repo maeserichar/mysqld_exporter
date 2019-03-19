@@ -61,10 +61,11 @@ func TestScrapeTableStatFilteredWithDefaultValues(t *testing.T) {
 		{labels: labelMap{"schema": "mysql", "table": "user"}, value: 2},
 		{labels: labelMap{"schema": "mysql", "table": "user"}, value: 5},
 	}
+
 	convey.Convey("Metrics comparison", t, func() {
-		for _, expect := range expected {
-			got := readMetric(<-ch)
-			convey.So(expect, convey.ShouldResemble, got)
+		for elem := range ch {
+			metric := readMetric(elem)
+			convey.So(expected, convey.ShouldContain, metric)
 		}
 	})
 
@@ -118,10 +119,11 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 		{labels: labelMap{"schema": "mysql", "table": "user"}, value: 2},
 		{labels: labelMap{"schema": "mysql", "table": "user"}, value: 5},
 	}
+
 	convey.Convey("Metrics comparison", t, func() {
-		for _, expect := range expected {
-			got := readMetric(<-ch)
-			convey.So(expect, convey.ShouldResemble, got)
+		for elem := range ch {
+			metric := readMetric(elem)
+			convey.So(expected, convey.ShouldContain, metric)
 		}
 	})
 

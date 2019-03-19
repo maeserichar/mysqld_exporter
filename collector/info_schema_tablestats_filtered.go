@@ -60,7 +60,7 @@ var (
 var (
 	regex = kingpin.Flag(
 		"collect.info_schema_tablestats_filtered.regex",
-		"Regex with capture groups for renaming the talbes",
+		"Regex with capture groups for renaming the tables",
 	).Default("(.*)").String()
 
 	substitution = kingpin.Flag(
