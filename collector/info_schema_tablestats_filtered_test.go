@@ -63,10 +63,14 @@ func TestScrapeTableStatFilteredWithDefaultValues(t *testing.T) {
 	}
 
 	convey.Convey("Metrics comparison", t, func() {
+		metricsReaded := 0
 		for elem := range ch {
 			metric := readMetric(elem)
 			convey.So(expected, convey.ShouldContain, metric)
+			metricsReaded++
 		}
+
+		convey.So(len(expected), convey.ShouldResemble, metricsReaded)
 	})
 
 	// Ensure all SQL queries were executed
@@ -82,7 +86,7 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err2 := kingpin.CommandLine.Parse([]string{"--collect.info_schema_tablestats_filtered.regex", `(.*)_\d`,
+	_, err2 := kingpin.CommandLine.Parse([]string{"--collect.info_schema_tablestats_filtered.regex", `(.*)\d`,
 		"--collect.info_schema_tablestats_filtered.substitution", "$1"})
 	if err2 != nil {
 		t.Fatal(err)
@@ -93,9 +97,9 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 
 	columns := []string{"TABLE_SCHEMA", "TABLE_NAME", "ROWS_READ", "ROWS_CHANGED", "ROWS_CHANGED_X_INDEXES"}
 	rows := sqlmock.NewRows(columns).
-		AddRow("mysql", "db_1", 5, 0, 8).
-		AddRow("mysql", "db_2", 5, 0, 8).
-		AddRow("mysql", "db_3", 5, 0, 8).
+		AddRow("mysql", "db1", 5, 0, 8).
+		AddRow("mysql", "db2", 5, 0, 8).
+		AddRow("mysql", "db3", 5, 0, 8).
 		AddRow("mysql", "proxies_priv", 99, 1, 0).
 		AddRow("mysql", "user", 1064, 2, 5)
 	mock.ExpectQuery(sanitizeQuery(tableStatFilteredQuery)).WillReturnRows(rows)
@@ -121,10 +125,14 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 	}
 
 	convey.Convey("Metrics comparison", t, func() {
+		metricsReaded := 0
 		for elem := range ch {
 			metric := readMetric(elem)
 			convey.So(expected, convey.ShouldContain, metric)
+			metricsReaded++
 		}
+
+		convey.So(len(expected), convey.ShouldResemble, metricsReaded)
 	})
 
 	// Ensure all SQL queries were executed
