@@ -19,14 +19,11 @@ import (
 	"context"
 	"database/sql"
 
-	"regexp"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-// TODO: Can be reused?
 const tableStatFilteredQuery = `
 		SELECT
 		  TABLE_SCHEMA,
@@ -37,7 +34,7 @@ const tableStatFilteredQuery = `
 		  FROM information_schema.table_statistics
 		`
 
-// Metric descriptors. TODO: Update descriptions and names
+// Metric descriptors.
 var (
 	infoSchemaTableStatsFilteredRowsReadDesc = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, informationSchema, "table_statistics_rows_read_total"),
@@ -56,6 +53,12 @@ var (
 	)
 )
 
+type MetricsDefinition struct {
+	name              string
+	metricType        prometheus.ValueType
+	metricDescription *prometheus.Desc
+}
+
 // Configuration
 var (
 	regex = kingpin.Flag(
@@ -67,6 +70,11 @@ var (
 		"collect.info_schema_tablestats_filtered.substitution",
 		"Substitution string to apply to the table name",
 	).Default("$1").String()
+
+	metrics = [3]MetricsDefinition{
+		MetricsDefinition{"rowsRead", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsReadDesc},
+		MetricsDefinition{"rowsChanged", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsChangedDesc},
+		MetricsDefinition{"rowsChangedXIndexes", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsChangedXIndexesDesc}}
 )
 
 // ScrapeTableStatFiltered collects from `information_schema.table_statistics`.
@@ -88,11 +96,37 @@ func (ScrapeTableStatFiltered) Version() float64 {
 }
 
 type tableStats struct {
-	schema              string
-	name                string
-	rowsRead            uint64
-	rowsChanged         uint64
-	rowsChangedXIndexes uint64
+	schema  string
+	name    string
+	metrics map[string]uint64
+}
+
+func getRawMetric(informationSchemaTableStatisticsRows *sql.Rows) (tableStats, error) {
+	var (
+		tableSchema         string
+		tableName           string
+		rowsRead            uint64
+		rowsChanged         uint64
+		rowsChangedXIndexes uint64
+	)
+
+	err := informationSchemaTableStatisticsRows.Scan(
+		&tableSchema,
+		&tableName,
+		&rowsRead,
+		&rowsChanged,
+		&rowsChangedXIndexes,
+	)
+	if err != nil {
+		return tableStats{}, err
+	}
+
+	tempStats := make(map[string]uint64)
+	tempStats["rowsChanged"] = rowsChanged
+	tempStats["rowsChangedXIndexes"] = rowsChangedXIndexes
+	tempStats["rowsRead"] = rowsRead
+
+	return tableStats{tableSchema, tableName, tempStats}, nil
 }
 
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
@@ -108,66 +142,22 @@ func (ScrapeTableStatFiltered) Scrape(ctx context.Context, db *sql.DB, ch chan<-
 		return nil
 	}
 
+	tableAggregator := TableAggregator{*regex, *substitution}
+
 	informationSchemaTableStatisticsRows, err := db.QueryContext(ctx, tableStatFilteredQuery)
 	if err != nil {
 		return err
 	}
 	defer informationSchemaTableStatisticsRows.Close()
 
-	var (
-		tableSchema         string
-		tableName           string
-		rowsRead            uint64
-		rowsChanged         uint64
-		rowsChangedXIndexes uint64
-	)
-
 	var aggregatedStats = make(map[string]tableStats)
 
 	for informationSchemaTableStatisticsRows.Next() {
-		err = informationSchemaTableStatisticsRows.Scan(
-			&tableSchema,
-			&tableName,
-			&rowsRead,
-			&rowsChanged,
-			&rowsChangedXIndexes,
-		)
-		if err != nil {
-			return err
-		}
-
-		tableNameRegex := regexp.MustCompile(*regex)
-
-		tableName := tableNameRegex.ReplaceAllString(tableName, *substitution)
-
-		stats, found := aggregatedStats[tableSchema+"."+tableName]
-
-		if !found {
-			stats = tableStats{tableSchema, tableName, 0, 0, 0}
-		}
-
-		stats.rowsChanged += rowsChanged
-		stats.rowsChangedXIndexes += rowsChangedXIndexes
-		stats.rowsRead += rowsRead
-
-		aggregatedStats[tableSchema+"."+tableName] = stats
+		tableAggregator.processRow(getRawMetric, informationSchemaTableStatisticsRows, aggregatedStats)
 	}
 
-	for _, table := range aggregatedStats {
+	tableAggregator.groupMetrics(ch, aggregatedStats, metrics[0:])
 
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsFilteredRowsReadDesc, prometheus.CounterValue, float64(table.rowsRead),
-			table.schema, table.name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsFilteredRowsChangedDesc, prometheus.CounterValue, float64(table.rowsChanged),
-			table.schema, table.name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsFilteredRowsChangedXIndexesDesc, prometheus.CounterValue, float64(table.rowsChangedXIndexes),
-			table.schema, table.name,
-		)
-	}
 	return nil
 }
 

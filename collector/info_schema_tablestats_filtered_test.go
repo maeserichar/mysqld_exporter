@@ -15,6 +15,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -124,10 +125,13 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 		{labels: labelMap{"schema": "mysql", "table": "user"}, value: 5},
 	}
 
+	fmt.Printf("%+v\n ", expected)
+
 	convey.Convey("Metrics comparison", t, func() {
 		metricsReaded := 0
 		for elem := range ch {
 			metric := readMetric(elem)
+			fmt.Printf("%+v\n ", metric)
 			convey.So(expected, convey.ShouldContain, metric)
 			metricsReaded++
 		}
