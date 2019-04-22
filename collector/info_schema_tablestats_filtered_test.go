@@ -87,8 +87,8 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err2 := kingpin.CommandLine.Parse([]string{"--collect.info_schema_tablestats_filtered.regex", `(.*)\d`,
-		"--collect.info_schema_tablestats_filtered.substitution", "$1"})
+	_, err2 := kingpin.CommandLine.Parse([]string{"--aggregate_table_metrics.regex", `(.*)\d`,
+		"--aggregate_table_metrics.substitution", "$1"})
 	if err2 != nil {
 		t.Fatal(err)
 	}

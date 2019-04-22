@@ -21,7 +21,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
-	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const tableStatFilteredQuery = `
@@ -53,28 +52,13 @@ var (
 	)
 )
 
-type MetricsDefinition struct {
-	name              string
-	metricType        prometheus.ValueType
-	metricDescription *prometheus.Desc
-}
-
 // Configuration
 var (
-	regex = kingpin.Flag(
-		"collect.info_schema_tablestats_filtered.regex",
-		"Regex with capture groups for renaming the tables",
-	).Default("(.*)").String()
-
-	substitution = kingpin.Flag(
-		"collect.info_schema_tablestats_filtered.substitution",
-		"Substitution string to apply to the table name",
-	).Default("$1").String()
-
-	metrics = [3]MetricsDefinition{
+	tableStatsMetrics = [3]MetricsDefinition{
 		MetricsDefinition{"rowsRead", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsReadDesc},
 		MetricsDefinition{"rowsChanged", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsChangedDesc},
-		MetricsDefinition{"rowsChangedXIndexes", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsChangedXIndexesDesc}}
+		MetricsDefinition{"rowsChangedXIndexes", prometheus.CounterValue, infoSchemaTableStatsFilteredRowsChangedXIndexesDesc},
+	}
 )
 
 // ScrapeTableStatFiltered collects from `information_schema.table_statistics`.
@@ -98,7 +82,8 @@ func (ScrapeTableStatFiltered) Version() float64 {
 type tableStats struct {
 	schema  string
 	name    string
-	metrics map[string]uint64
+	metrics map[string]float64
+	labels  map[string]string
 }
 
 func getRawMetric(informationSchemaTableStatisticsRows *sql.Rows) (tableStats, error) {
@@ -121,12 +106,12 @@ func getRawMetric(informationSchemaTableStatisticsRows *sql.Rows) (tableStats, e
 		return tableStats{}, err
 	}
 
-	tempStats := make(map[string]uint64)
-	tempStats["rowsChanged"] = rowsChanged
-	tempStats["rowsChangedXIndexes"] = rowsChangedXIndexes
-	tempStats["rowsRead"] = rowsRead
+	tempStats := make(map[string]float64)
+	tempStats["rowsChanged"] = float64(rowsChanged)
+	tempStats["rowsChangedXIndexes"] = float64(rowsChangedXIndexes)
+	tempStats["rowsRead"] = float64(rowsRead)
 
-	return tableStats{tableSchema, tableName, tempStats}, nil
+	return tableStats{tableSchema, tableName, tempStats, nil}, nil
 }
 
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
@@ -156,7 +141,7 @@ func (ScrapeTableStatFiltered) Scrape(ctx context.Context, db *sql.DB, ch chan<-
 		tableAggregator.processRow(getRawMetric, informationSchemaTableStatisticsRows, aggregatedStats)
 	}
 
-	tableAggregator.groupMetrics(ch, aggregatedStats, metrics[0:])
+	tableAggregator.groupMetrics(ch, aggregatedStats, tableStatsMetrics[0:])
 
 	return nil
 }
