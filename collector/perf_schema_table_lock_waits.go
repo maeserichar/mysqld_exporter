@@ -72,6 +72,29 @@ var (
 		"The total time of external lock wait events for each table and operation.",
 		[]string{"schema", "name", "operation"}, nil,
 	)
+
+	lockWaitsMetrics = [20]MetricsDefinition{
+		MetricsDefinition{"readNormalCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"readSharedLocksCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"readHighPriorityCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"readNoInsertCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"writeNormalCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"writeAllowCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"writeConcurrentInsertCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"writeLowPriorityCount", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsDesc},
+		MetricsDefinition{"readExternalCount", prometheus.CounterValue, performanceSchemaExternalTableLockWaitsDesc},
+		MetricsDefinition{"writeExternalCount", prometheus.CounterValue, performanceSchemaExternalTableLockWaitsDesc},
+		MetricsDefinition{"readNormalTime", prometheus.CounterValue, performanceSchemaExternalTableLockWaitsDesc},
+		MetricsDefinition{"readSharedLocksTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"readHighPriorityTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"readNoInsertTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"writeNormalTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"writeAllowTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"writeConcurrentInsertTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"writeLowPriorityTime", prometheus.CounterValue, performanceSchemaSQLTableLockWaitsTimeDesc},
+		MetricsDefinition{"readExternalTime", prometheus.CounterValue, performanceSchemaExternalTableLockWaitsTimeDesc},
+		MetricsDefinition{"writeExternalTime", prometheus.CounterValue, performanceSchemaExternalTableLockWaitsTimeDesc},
+	}
 )
 
 // ScrapePerfTableLockWaits collects from `performance_schema.table_lock_waits_summary_by_table`.
@@ -92,14 +115,7 @@ func (ScrapePerfTableLockWaits) Version() float64 {
 	return 5.6
 }
 
-// Scrape collects data from database connection and sends it over channel as prometheus metric.
-func (ScrapePerfTableLockWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- prometheus.Metric) error {
-	perfSchemaTableLockWaitsRows, err := db.QueryContext(ctx, perfTableLockWaitsQuery)
-	if err != nil {
-		return err
-	}
-	defer perfSchemaTableLockWaitsRows.Close()
-
+func getLockWaitsRawMetric(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, error) {
 	var (
 		objectSchema               string
 		objectName                 string
@@ -125,114 +141,120 @@ func (ScrapePerfTableLockWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<
 		timeWriteExternal          uint64
 	)
 
+	if err := perfSchemaTableLockWaitsRows.Scan(
+		&objectSchema,
+		&objectName,
+		&countReadNormal,
+		&countReadWithSharedLocks,
+		&countReadHighPriority,
+		&countReadNoInsert,
+		&countReadExternal,
+		&countWriteAllowWrite,
+		&countWriteConcurrentInsert,
+		&countWriteLowPriority,
+		&countWriteNormal,
+		&countWriteExternal,
+		&timeReadNormal,
+		&timeReadWithSharedLocks,
+		&timeReadHighPriority,
+		&timeReadNoInsert,
+		&timeReadExternal,
+		&timeWriteAllowWrite,
+		&timeWriteConcurrentInsert,
+		&timeWriteLowPriority,
+		&timeWriteNormal,
+		&timeWriteExternal,
+	); err != nil {
+		return tableStats{}, err
+	}
+
+	stats := make(map[string]float64)
+	labels := make(map[string][]string)
+
+	stats["readNormalCount"] = float64(countReadNormal)
+	labels["readNormalCount"] = []string{"read_normal"}
+
+	stats["readSharedLocksCount"] = float64(countReadWithSharedLocks)
+	labels["readSharedLocksCount"] = []string{"read_with_shared_locks"}
+
+	stats["readHighPriorityCount"] = float64(countReadHighPriority)
+	labels["readHighPriorityCount"] = []string{"read_high_priority"}
+
+	stats["readNoInsertCount"] = float64(countReadNoInsert)
+	labels["readNoInsertCount"] = []string{"read_no_insert"}
+
+	stats["writeNormalCount"] = float64(countWriteNormal)
+	labels["writeNormalCount"] = []string{"write_normal"}
+
+	stats["writeAllowCount"] = float64(countWriteAllowWrite)
+	labels["writeAllowCount"] = []string{"write_allow_write"}
+
+	stats["writeConcurrentInsertCount"] = float64(countWriteConcurrentInsert)
+	labels["writeConcurrentInsertCount"] = []string{"write_concurrent_insert"}
+
+	stats["writeLowPriorityCount"] = float64(countWriteLowPriority)
+	labels["writeLowPriorityCount"] = []string{"write_low_priority"}
+
+	stats["readExternalCount"] = float64(countReadExternal)
+	labels["readExternalCount"] = []string{"read"}
+
+	stats["writeExternalCount"] = float64(countWriteExternal)
+	labels["writeExternalCount"] = []string{"write"}
+
+	stats["readNormalTime"] = float64(timeReadNormal) / picoSeconds
+	labels["readNormalTime"] = []string{"read_normal"}
+
+	stats["readSharedLocksTime"] = float64(timeReadWithSharedLocks) / picoSeconds
+	labels["readSharedLocksTime"] = []string{"read_with_shared_locks"}
+
+	stats["readHighPriorityTime"] = float64(timeReadHighPriority) / picoSeconds
+	labels["readHighPriorityTime"] = []string{"read_high_priority"}
+
+	stats["readNoInsertTime"] = float64(timeReadNoInsert) / picoSeconds
+	labels["readNoInsertTime"] = []string{"read_no_insert"}
+
+	stats["writeNormalTime"] = float64(timeWriteNormal) / picoSeconds
+	labels["writeNormalTime"] = []string{"write_normal"}
+
+	stats["writeAllowTime"] = float64(timeWriteAllowWrite) / picoSeconds
+	labels["writeAllowTime"] = []string{"write_allow_write"}
+
+	stats["writeConcurrentInsertTime"] = float64(timeWriteConcurrentInsert) / picoSeconds
+	labels["writeConcurrentInsertTime"] = []string{"write_concurrent_insert"}
+
+	stats["writeLowPriorityTime"] = float64(timeWriteLowPriority) / picoSeconds
+	labels["writeLowPriorityTime"] = []string{"write_low_priority"}
+
+	stats["readExternalTime"] = float64(timeReadExternal) / picoSeconds
+	labels["readExternalTime"] = []string{"read"}
+
+	stats["writeExternalTime"] = float64(timeWriteExternal) / picoSeconds
+	labels["writeExternalTime"] = []string{"write"}
+
+	return tableStats{objectSchema, objectName, stats, labels}, nil
+}
+
+// Scrape collects data from database connection and sends it over channel as prometheus metric.
+func (ScrapePerfTableLockWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- prometheus.Metric) error {
+	perfSchemaTableLockWaitsRows, err := db.QueryContext(ctx, perfTableLockWaitsQuery)
+	if err != nil {
+		return err
+	}
+	defer perfSchemaTableLockWaitsRows.Close()
+
+	aggregator := TableAggregator{*Regex, *Substitution}
+	aggregatedStats := make(map[string]tableStats)
+
 	for perfSchemaTableLockWaitsRows.Next() {
-		if err := perfSchemaTableLockWaitsRows.Scan(
-			&objectSchema,
-			&objectName,
-			&countReadNormal,
-			&countReadWithSharedLocks,
-			&countReadHighPriority,
-			&countReadNoInsert,
-			&countReadExternal,
-			&countWriteAllowWrite,
-			&countWriteConcurrentInsert,
-			&countWriteLowPriority,
-			&countWriteNormal,
-			&countWriteExternal,
-			&timeReadNormal,
-			&timeReadWithSharedLocks,
-			&timeReadHighPriority,
-			&timeReadNoInsert,
-			&timeReadExternal,
-			&timeWriteAllowWrite,
-			&timeWriteConcurrentInsert,
-			&timeWriteLowPriority,
-			&timeWriteNormal,
-			&timeWriteExternal,
-		); err != nil {
+		err := aggregator.processRow(getLockWaitsRawMetric, perfSchemaTableLockWaitsRows, aggregatedStats)
+
+		if err != nil {
 			return err
 		}
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countReadNormal),
-			objectSchema, objectName, "read_normal",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countReadWithSharedLocks),
-			objectSchema, objectName, "read_with_shared_locks",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countReadHighPriority),
-			objectSchema, objectName, "read_high_priority",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countReadNoInsert),
-			objectSchema, objectName, "read_no_insert",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countWriteNormal),
-			objectSchema, objectName, "write_normal",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countWriteAllowWrite),
-			objectSchema, objectName, "write_allow_write",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countWriteConcurrentInsert),
-			objectSchema, objectName, "write_concurrent_insert",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsDesc, prometheus.CounterValue, float64(countWriteLowPriority),
-			objectSchema, objectName, "write_low_priority",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaExternalTableLockWaitsDesc, prometheus.CounterValue, float64(countReadExternal),
-			objectSchema, objectName, "read",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaExternalTableLockWaitsDesc, prometheus.CounterValue, float64(countWriteExternal),
-			objectSchema, objectName, "write",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeReadNormal)/picoSeconds,
-			objectSchema, objectName, "read_normal",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeReadWithSharedLocks)/picoSeconds,
-			objectSchema, objectName, "read_with_shared_locks",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeReadHighPriority)/picoSeconds,
-			objectSchema, objectName, "read_high_priority",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeReadNoInsert)/picoSeconds,
-			objectSchema, objectName, "read_no_insert",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeWriteNormal)/picoSeconds,
-			objectSchema, objectName, "write_normal",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeWriteAllowWrite)/picoSeconds,
-			objectSchema, objectName, "write_allow_write",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeWriteConcurrentInsert)/picoSeconds,
-			objectSchema, objectName, "write_concurrent_insert",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaSQLTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeWriteLowPriority)/picoSeconds,
-			objectSchema, objectName, "write_low_priority",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaExternalTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeReadExternal)/picoSeconds,
-			objectSchema, objectName, "read",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaExternalTableLockWaitsTimeDesc, prometheus.CounterValue, float64(timeWriteExternal)/picoSeconds,
-			objectSchema, objectName, "write",
-		)
 	}
+
+	aggregator.sendMetrics(ch, aggregatedStats, lockWaitsMetrics[0:])
+
 	return nil
 }
 

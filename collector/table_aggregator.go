@@ -6,15 +6,18 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/alecthomas/kingpin.v2"
+
+	// TODO: Remove
+	"fmt"
 )
 
 var (
-	regex = kingpin.Flag(
+	Regex = kingpin.Flag(
 		"aggregate_table_metrics.regex",
 		"Regex with capture groups for renaming the tables",
 	).Default("(.*)").String()
 
-	substitution = kingpin.Flag(
+	Substitution = kingpin.Flag(
 		"aggregate_table_metrics.substitution",
 		"Substitution string to apply to the table name",
 	).Default("$1").String()
@@ -42,19 +45,21 @@ func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows
 		return err
 	}
 
+	fmt.Print(ta.regex)
+
 	tableNameRegex := regexp.MustCompile(ta.regex)
 	tableName := tableNameRegex.ReplaceAllString(tempStats.name, ta.substitution)
 
 	stats, found := aggregatedStats[tempStats.schema+"."+tableName]
 
 	if !found {
-		stats = tableStats{tempStats.schema, tableName, make(map[string]float64), make(map[string]string)}
+		stats = tableStats{tempStats.schema, tableName, make(map[string]float64), make(map[string][]string)}
 	}
 
 	for k := range tempStats.metrics {
 		stats.metrics[k] += tempStats.metrics[k]
 
-		// TODO: View if there is a more idiomatic way (and manage multiple labels)
+		// Make sense to allow mixing labels? If different labels it is a different metric
 		stats.labels[k] = tempStats.labels[k]
 	}
 
@@ -63,23 +68,22 @@ func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows
 	return nil
 }
 
-func (TableAggregator) groupMetrics(ch chan<- prometheus.Metric,
+func (TableAggregator) sendMetrics(ch chan<- prometheus.Metric,
 	aggregatedStats map[string]tableStats, metrics []MetricsDefinition) error {
 	for _, table := range aggregatedStats {
 
 		for _, metric := range metrics {
-			// TODO: Review how to handle this
-			if table.labels[metric.name] != "" {
-				ch <- prometheus.MustNewConstMetric(
-					metric.metricDescription, metric.metricType, float64(table.metrics[metric.name]),
-					table.schema, table.name, table.labels[metric.name],
-				)
-			} else {
-				ch <- prometheus.MustNewConstMetric(
-					metric.metricDescription, metric.metricType, float64(table.metrics[metric.name]),
-					table.schema, table.name,
-				)
+
+			labels := []string{table.schema, table.name}
+
+			if len(table.labels[metric.name]) > 0 {
+				labels = append(labels, table.labels[metric.name]...)
 			}
+
+			ch <- prometheus.MustNewConstMetric(
+				metric.metricDescription, metric.metricType, float64(table.metrics[metric.name]),
+				labels...,
+			)
 		}
 	}
 

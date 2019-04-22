@@ -90,7 +90,7 @@ func TestScrapeTableStatFilteredWithCustomRegex(t *testing.T) {
 	_, err2 := kingpin.CommandLine.Parse([]string{"--aggregate_table_metrics.regex", `(.*)\d`,
 		"--aggregate_table_metrics.substitution", "$1"})
 	if err2 != nil {
-		t.Fatal(err)
+		t.Fatal(err2)
 	}
 
 	mock.ExpectQuery(sanitizeQuery(userstatCheckQuery)).WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).

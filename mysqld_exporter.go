@@ -273,6 +273,11 @@ func main() {
 			enabledScrapers = append(enabledScrapers, scraper)
 		}
 	}
+
+	log.Infoln("Shard grouping config:")
+	log.Infoln("Regex: " + *collector.Regex)
+	log.Infoln("Substitution pattern: " + *collector.Substitution)
+
 	handlerFunc := newHandler(collector.NewMetrics(), enabledScrapers)
 	http.HandleFunc(*metricPath, prometheus.InstrumentHandlerFunc("metrics", handlerFunc))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

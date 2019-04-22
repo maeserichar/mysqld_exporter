@@ -83,7 +83,7 @@ type tableStats struct {
 	schema  string
 	name    string
 	metrics map[string]float64
-	labels  map[string]string
+	labels  map[string][]string
 }
 
 func getRawMetric(informationSchemaTableStatisticsRows *sql.Rows) (tableStats, error) {
@@ -127,7 +127,7 @@ func (ScrapeTableStatFiltered) Scrape(ctx context.Context, db *sql.DB, ch chan<-
 		return nil
 	}
 
-	tableAggregator := TableAggregator{*regex, *substitution}
+	tableAggregator := TableAggregator{*Regex, *Substitution}
 
 	informationSchemaTableStatisticsRows, err := db.QueryContext(ctx, tableStatFilteredQuery)
 	if err != nil {
@@ -141,7 +141,7 @@ func (ScrapeTableStatFiltered) Scrape(ctx context.Context, db *sql.DB, ch chan<-
 		tableAggregator.processRow(getRawMetric, informationSchemaTableStatisticsRows, aggregatedStats)
 	}
 
-	tableAggregator.groupMetrics(ch, aggregatedStats, tableStatsMetrics[0:])
+	tableAggregator.sendMetrics(ch, aggregatedStats, tableStatsMetrics[0:])
 
 	return nil
 }

@@ -88,31 +88,31 @@ func getIOWaitsRawMetric(perfSchemaTableWaitsRows *sql.Rows) (tableStats, error)
 	}
 
 	stats := make(map[string]float64)
-	labels := make(map[string]string)
+	labels := make(map[string][]string)
 
 	stats["fetchCount"] = float64(countFetch)
-	labels["fetchCount"] = "fetch"
+	labels["fetchCount"] = []string{"fetch"}
 
 	stats["insertCount"] = float64(countInsert)
-	labels["insertCount"] = "insert"
+	labels["insertCount"] = []string{"insert"}
 
 	stats["updateCount"] = float64(countUpdate)
-	labels["updateCount"] = "update"
+	labels["updateCount"] = []string{"update"}
 
 	stats["deleteCount"] = float64(countDelete)
-	labels["deleteCount"] = "delete"
+	labels["deleteCount"] = []string{"delete"}
 
 	stats["fetchTime"] = float64(timeFetch) / picoSeconds
-	labels["fetchTime"] = "fetch"
+	labels["fetchTime"] = []string{"fetch"}
 
 	stats["insertTime"] = float64(timeInsert) / picoSeconds
-	labels["insertTime"] = "insert"
+	labels["insertTime"] = []string{"insert"}
 
 	stats["updateTime"] = float64(timeUpdate) / picoSeconds
-	labels["updateTime"] = "update"
+	labels["updateTime"] = []string{"update"}
 
 	stats["deleteTime"] = float64(timeDelete) / picoSeconds
-	labels["deleteTime"] = "delete"
+	labels["deleteTime"] = []string{"delete"}
 
 	return tableStats{objectSchema, objectName, stats, labels}, nil
 }
@@ -125,7 +125,7 @@ func (ScrapePerfTableIOWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- 
 	}
 	defer perfSchemaTableWaitsRows.Close()
 
-	aggregator := TableAggregator{*regex, *substitution}
+	aggregator := TableAggregator{*Regex, *Substitution}
 	aggregatedStats := make(map[string]tableStats)
 
 	for perfSchemaTableWaitsRows.Next() {
@@ -136,7 +136,7 @@ func (ScrapePerfTableIOWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- 
 		}
 	}
 
-	aggregator.groupMetrics(ch, aggregatedStats, ioWaitsMetrics[0:])
+	aggregator.sendMetrics(ch, aggregatedStats, ioWaitsMetrics[0:])
 
 	return nil
 }
