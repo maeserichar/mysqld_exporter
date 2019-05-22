@@ -20,10 +20,11 @@ var (
 func TestSendMetrics(t *testing.T) {
 	ch := make(chan prometheus.Metric)
 	aggregator := TableAggregator{}
-	aggregatedStats := make(map[string]tableStats)
-	aggregatedStats["test.table"] = tableStats{
+	aggregatedStats := make(map[string]TableStats)
+	aggregatedStats["test.table"] = TableStats{
 		"test",
 		"table",
+		[]string{},
 		map[string]float64{
 			"readNormalCount":       float64(2),
 			"readSharedLocksCount":  float64(4),
@@ -64,7 +65,7 @@ func TestSendMetrics(t *testing.T) {
 	})
 }
 
-func rowProviderFunc(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, error) {
+func rowProviderFunc(perfSchemaTableLockWaitsRows *sql.Rows) (TableStats, error) {
 	var (
 		tableSchema         string
 		tableName           string
@@ -81,7 +82,7 @@ func rowProviderFunc(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, error)
 		&rowsChangedXIndexes,
 	)
 	if err != nil {
-		return tableStats{}, err
+		return TableStats{}, err
 	}
 
 	tempStats := make(map[string]float64)
@@ -94,13 +95,13 @@ func rowProviderFunc(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, error)
 	tempLabels["rowsChangedXIndexes"] = []string{"label2"}
 	tempLabels["rowsRead"] = []string{"label3"}
 
-	return tableStats{tableSchema, tableName, tempStats, tempLabels}, nil
+	return TableStats{tableSchema, tableName, []string{}, tempStats, tempLabels}, nil
 }
 
 func TestProcessRow(t *testing.T) {
 	db, mock, _ := sqlmock.New()
-	aggregator := TableAggregator{}
-	aggregatedStats := make(map[string]tableStats)
+	aggregator := NewTableAggregator(*Regex, *Substitution)
+	aggregatedStats := make(map[string]TableStats)
 
 	columns := []string{"TABLE_SCHEMA", "TABLE_NAME", "ROWS_READ", "ROWS_CHANGED", "ROWS_CHANGED_X_INDEXES"}
 	rows := sqlmock.NewRows(columns).
@@ -114,10 +115,11 @@ func TestProcessRow(t *testing.T) {
 		aggregator.processRow(rowProviderFunc, mockRows, aggregatedStats)
 	}
 
-	expectedStats := map[string]tableStats{
-		"mysql.proxies_priv": tableStats{
+	expectedStats := map[string]TableStats{
+		"mysql.proxies_priv": TableStats{
 			"mysql",
 			"proxies_priv",
+			[]string{},
 			map[string]float64{
 				"rowsChanged":         float64(1),
 				"rowsChangedXIndexes": float64(0),
@@ -129,9 +131,10 @@ func TestProcessRow(t *testing.T) {
 				"rowsRead":            []string{"label3"},
 			},
 		},
-		"mysql.user": tableStats{
+		"mysql.user": TableStats{
 			"mysql",
 			"user",
+			[]string{},
 			map[string]float64{
 				"rowsChanged":         float64(2),
 				"rowsChangedXIndexes": float64(5),
@@ -159,8 +162,8 @@ func TestProcessRow(t *testing.T) {
 
 func TestProcessRowWithRegex(t *testing.T) {
 	db, mock, _ := sqlmock.New()
-	aggregator := TableAggregator{"(.*)\\d", "$1"}
-	aggregatedStats := make(map[string]tableStats)
+	aggregator := NewTableAggregator("(.*)\\d", "$1")
+	aggregatedStats := make(map[string]TableStats)
 
 	columns := []string{"TABLE_SCHEMA", "TABLE_NAME", "ROWS_READ", "ROWS_CHANGED", "ROWS_CHANGED_X_INDEXES"}
 	rows := sqlmock.NewRows(columns).
@@ -174,10 +177,11 @@ func TestProcessRowWithRegex(t *testing.T) {
 		aggregator.processRow(rowProviderFunc, mockRows, aggregatedStats)
 	}
 
-	expectedStats := map[string]tableStats{
-		"mysql.user": tableStats{
+	expectedStats := map[string]TableStats{
+		"mysql.user": TableStats{
 			"mysql",
 			"user",
+			[]string{},
 			map[string]float64{
 				"rowsChanged":         float64(3),
 				"rowsChangedXIndexes": float64(5),

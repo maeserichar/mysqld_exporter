@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Scrape `information_schema.table_statistics`.
+// Scrape `information_schema.table_statistics` grouped by regex.
 
 package collector
 
@@ -52,6 +52,15 @@ var (
 	)
 )
 
+// Configuration
+var (
+	tableStatsMetrics = [3]MetricsDefinition{
+		MetricsDefinition{"rowsRead", prometheus.CounterValue, infoSchemaTableStatsRowsReadDesc},
+		MetricsDefinition{"rowsChanged", prometheus.CounterValue, infoSchemaTableStatsRowsChangedDesc},
+		MetricsDefinition{"rowsChangedXIndexes", prometheus.CounterValue, infoSchemaTableStatsRowsChangedXIndexesDesc},
+	}
+)
+
 // ScrapeTableStat collects from `information_schema.table_statistics`.
 type ScrapeTableStat struct{}
 
@@ -70,6 +79,34 @@ func (ScrapeTableStat) Version() float64 {
 	return 5.1
 }
 
+func getRawMetric(informationSchemaTableStatisticsRows *sql.Rows) (TableStats, error) {
+	var (
+		tableSchema         string
+		tableName           string
+		rowsRead            uint64
+		rowsChanged         uint64
+		rowsChangedXIndexes uint64
+	)
+
+	err := informationSchemaTableStatisticsRows.Scan(
+		&tableSchema,
+		&tableName,
+		&rowsRead,
+		&rowsChanged,
+		&rowsChangedXIndexes,
+	)
+	if err != nil {
+		return TableStats{}, err
+	}
+
+	tempStats := make(map[string]float64)
+	tempStats["rowsChanged"] = float64(rowsChanged)
+	tempStats["rowsChangedXIndexes"] = float64(rowsChangedXIndexes)
+	tempStats["rowsRead"] = float64(rowsRead)
+
+	return TableStats{tableSchema, tableName, nil, tempStats, nil}, nil
+}
+
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
 func (ScrapeTableStat) Scrape(ctx context.Context, db *sql.DB, ch chan<- prometheus.Metric) error {
 	var varName, varVal string
@@ -83,44 +120,22 @@ func (ScrapeTableStat) Scrape(ctx context.Context, db *sql.DB, ch chan<- prometh
 		return nil
 	}
 
+	tableAggregator := NewTableAggregator(*Regex, *Substitution)
+
 	informationSchemaTableStatisticsRows, err := db.QueryContext(ctx, tableStatQuery)
 	if err != nil {
 		return err
 	}
 	defer informationSchemaTableStatisticsRows.Close()
 
-	var (
-		tableSchema         string
-		tableName           string
-		rowsRead            uint64
-		rowsChanged         uint64
-		rowsChangedXIndexes uint64
-	)
+	var aggregatedStats = make(map[string]TableStats)
 
 	for informationSchemaTableStatisticsRows.Next() {
-		err = informationSchemaTableStatisticsRows.Scan(
-			&tableSchema,
-			&tableName,
-			&rowsRead,
-			&rowsChanged,
-			&rowsChangedXIndexes,
-		)
-		if err != nil {
-			return err
-		}
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsRowsReadDesc, prometheus.CounterValue, float64(rowsRead),
-			tableSchema, tableName,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsRowsChangedDesc, prometheus.CounterValue, float64(rowsChanged),
-			tableSchema, tableName,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			infoSchemaTableStatsRowsChangedXIndexesDesc, prometheus.CounterValue, float64(rowsChangedXIndexes),
-			tableSchema, tableName,
-		)
+		tableAggregator.processRow(getRawMetric, informationSchemaTableStatisticsRows, aggregatedStats)
 	}
+
+	tableAggregator.sendMetrics(ch, aggregatedStats, tableStatsMetrics[0:])
+
 	return nil
 }
 

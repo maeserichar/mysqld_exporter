@@ -21,6 +21,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/smartystreets/goconvey/convey"
 	"gopkg.in/DATA-DOG/go-sqlmock.v1"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 func TestScrapePerfIndexIOWaits(t *testing.T) {
@@ -60,6 +61,65 @@ func TestScrapePerfIndexIOWaits(t *testing.T) {
 		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "insert"}, value: 25, metricType: dto.MetricType_COUNTER},
 		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "update"}, value: 26, metricType: dto.MetricType_COUNTER},
 		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "delete"}, value: 27, metricType: dto.MetricType_COUNTER},
+	}
+	convey.Convey("Metrics comparison", t, func() {
+		for _, expect := range metricExpected {
+			got := readMetric(<-ch)
+			convey.So(got, convey.ShouldResemble, expect)
+		}
+	})
+
+	// Ensure all SQL queries were executed
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled exceptions: %s", err)
+	}
+}
+
+func TestScrapePerfIndexIOWaitsGrouped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("error opening a stub database connection: %s", err)
+	}
+	defer db.Close()
+
+	_, err2 := kingpin.CommandLine.Parse([]string{"--aggregate_table_metrics.regex", `(.*)\d`,
+		"--aggregate_table_metrics.substitution", "$1"})
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+
+	columns := []string{"OBJECT_SCHEMA", "OBJECT_NAME", "INDEX_NAME", "COUNT_FETCH", "COUNT_INSERT", "COUNT_UPDATE", "COUNT_DELETE", "SUM_TIMER_FETCH", "SUM_TIMER_INSERT", "SUM_TIMER_UPDATE", "SUM_TIMER_DELETE"}
+	rows := sqlmock.NewRows(columns).
+		// Note, timers are in picoseconds.
+		AddRow("database", "table", "index", "10", "11", "12", "13", "14000000000000", "15000000000000", "16000000000000", "17000000000000").
+		AddRow("database", "table2", "index", "10", "11", "12", "13", "14000000000000", "15000000000000", "16000000000000", "17000000000000").
+		AddRow("database", "table", "NONE", "20", "21", "22", "23", "24000000000000", "25000000000000", "26000000000000", "27000000000000").
+		AddRow("database", "table2", "NONE", "20", "21", "22", "23", "24000000000000", "25000000000000", "26000000000000", "27000000000000")
+	mock.ExpectQuery(sanitizeQuery(perfIndexIOWaitsQuery)).WillReturnRows(rows)
+
+	ch := make(chan prometheus.Metric)
+	go func() {
+		if err = (ScrapePerfIndexIOWaits{}).Scrape(context.Background(), db, ch); err != nil {
+			t.Errorf("error calling function on test: %s", err)
+		}
+		close(ch)
+	}()
+
+	metricExpected := []MetricResult{
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "fetch"}, value: 20, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "update"}, value: 24, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "delete"}, value: 26, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "fetch"}, value: 28, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "update"}, value: 32, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "index", "operation": "delete"}, value: 34, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "fetch"}, value: 40, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "insert"}, value: 42, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "update"}, value: 44, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "delete"}, value: 46, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "fetch"}, value: 48, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "insert"}, value: 50, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "update"}, value: 52, metricType: dto.MetricType_COUNTER},
+		{labels: labelMap{"schema": "database", "name": "table", "index": "NONE", "operation": "delete"}, value: 54, metricType: dto.MetricType_COUNTER},
 	}
 	convey.Convey("Metrics comparison", t, func() {
 		for _, expect := range metricExpected {

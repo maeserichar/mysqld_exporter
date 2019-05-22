@@ -73,7 +73,7 @@ func (ScrapePerfTableIOWaits) Version() float64 {
 	return 5.6
 }
 
-func getIOWaitsRawMetric(perfSchemaTableWaitsRows *sql.Rows) (tableStats, error) {
+func getIOWaitsRawMetric(perfSchemaTableWaitsRows *sql.Rows) (TableStats, error) {
 	var (
 		objectSchema, objectName                          string
 		countFetch, countInsert, countUpdate, countDelete uint64
@@ -84,7 +84,7 @@ func getIOWaitsRawMetric(perfSchemaTableWaitsRows *sql.Rows) (tableStats, error)
 		&objectSchema, &objectName, &countFetch, &countInsert, &countUpdate, &countDelete,
 		&timeFetch, &timeInsert, &timeUpdate, &timeDelete,
 	); err != nil {
-		return tableStats{}, err
+		return TableStats{}, err
 	}
 
 	stats := make(map[string]float64)
@@ -114,7 +114,7 @@ func getIOWaitsRawMetric(perfSchemaTableWaitsRows *sql.Rows) (tableStats, error)
 	stats["deleteTime"] = float64(timeDelete) / picoSeconds
 	labels["deleteTime"] = []string{"delete"}
 
-	return tableStats{objectSchema, objectName, stats, labels}, nil
+	return TableStats{objectSchema, objectName, nil, stats, labels}, nil
 }
 
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
@@ -125,8 +125,8 @@ func (ScrapePerfTableIOWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- 
 	}
 	defer perfSchemaTableWaitsRows.Close()
 
-	aggregator := TableAggregator{*Regex, *Substitution}
-	aggregatedStats := make(map[string]tableStats)
+	aggregator := NewTableAggregator(*Regex, *Substitution)
+	aggregatedStats := make(map[string]TableStats)
 
 	for perfSchemaTableWaitsRows.Next() {
 		err := aggregator.processRow(getIOWaitsRawMetric, perfSchemaTableWaitsRows, aggregatedStats)

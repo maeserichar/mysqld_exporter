@@ -42,6 +42,16 @@ var (
 		"The total time of index I/O wait events for each index and operation.",
 		[]string{"schema", "name", "index", "operation"}, nil,
 	)
+	indexIoWaitsMetrics = [8]MetricsDefinition{
+		MetricsDefinition{"fetchCount", prometheus.CounterValue, performanceSchemaIndexWaitsDesc},
+		MetricsDefinition{"insertCount", prometheus.CounterValue, performanceSchemaIndexWaitsDesc},
+		MetricsDefinition{"updateCount", prometheus.CounterValue, performanceSchemaIndexWaitsDesc},
+		MetricsDefinition{"deleteCount", prometheus.CounterValue, performanceSchemaIndexWaitsDesc},
+		MetricsDefinition{"fetchTime", prometheus.CounterValue, performanceSchemaIndexWaitsTimeDesc},
+		MetricsDefinition{"insertTime", prometheus.CounterValue, performanceSchemaIndexWaitsTimeDesc},
+		MetricsDefinition{"updateTime", prometheus.CounterValue, performanceSchemaIndexWaitsTimeDesc},
+		MetricsDefinition{"deleteTime", prometheus.CounterValue, performanceSchemaIndexWaitsTimeDesc},
+	}
 )
 
 // ScrapePerfIndexIOWaits collects for `performance_schema.table_io_waits_summary_by_index_usage`.
@@ -62,6 +72,52 @@ func (ScrapePerfIndexIOWaits) Version() float64 {
 	return 5.6
 }
 
+func getIndexIOWaitsRawMetric(perfSchemaIndexWaitsRows *sql.Rows) (TableStats, error) {
+	var (
+		objectSchema, objectName, indexName               string
+		countFetch, countInsert, countUpdate, countDelete uint64
+		timeFetch, timeInsert, timeUpdate, timeDelete     uint64
+	)
+
+	if err := perfSchemaIndexWaitsRows.Scan(
+		&objectSchema, &objectName, &indexName, &countFetch, &countInsert, &countUpdate, &countDelete,
+		&timeFetch, &timeInsert, &timeUpdate, &timeDelete,
+	); err != nil {
+		return TableStats{}, err
+	}
+
+	stats := make(map[string]float64)
+	labels := make(map[string][]string)
+
+	stats["fetchCount"] = float64(countFetch)
+	labels["fetchCount"] = []string{"fetch"}
+
+	stats["updateCount"] = float64(countUpdate)
+	labels["updateCount"] = []string{"update"}
+
+	stats["deleteCount"] = float64(countDelete)
+	labels["deleteCount"] = []string{"delete"}
+
+	stats["fetchTime"] = float64(timeFetch) / picoSeconds
+	labels["fetchTime"] = []string{"fetch"}
+
+	stats["updateTime"] = float64(timeUpdate) / picoSeconds
+	labels["updateTime"] = []string{"update"}
+
+	stats["deleteTime"] = float64(timeDelete) / picoSeconds
+	labels["deleteTime"] = []string{"delete"}
+
+	if indexName == "NONE" {
+		stats["insertCount"] = float64(countInsert)
+		labels["insertCount"] = []string{"insert"}
+
+		stats["insertTime"] = float64(timeInsert) / picoSeconds
+		labels["insertTime"] = []string{"insert"}
+	}
+
+	return TableStats{objectSchema, objectName, []string{indexName}, stats, labels}, nil
+}
+
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
 func (ScrapePerfIndexIOWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- prometheus.Metric) error {
 	perfSchemaIndexWaitsRows, err := db.QueryContext(ctx, perfIndexIOWaitsQuery)
@@ -70,59 +126,21 @@ func (ScrapePerfIndexIOWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<- 
 	}
 	defer perfSchemaIndexWaitsRows.Close()
 
-	var (
-		objectSchema, objectName, indexName               string
-		countFetch, countInsert, countUpdate, countDelete uint64
-		timeFetch, timeInsert, timeUpdate, timeDelete     uint64
-	)
+	aggregator := TableAggregator{*Regex, *Substitution, func(t TableStats) string {
+		return t.name + "." + t.schema + "." + t.commonLabels[0] // TODO: Review this!
+	}}
+	aggregatedStats := make(map[string]TableStats)
 
 	for perfSchemaIndexWaitsRows.Next() {
-		if err := perfSchemaIndexWaitsRows.Scan(
-			&objectSchema, &objectName, &indexName,
-			&countFetch, &countInsert, &countUpdate, &countDelete,
-			&timeFetch, &timeInsert, &timeUpdate, &timeDelete,
-		); err != nil {
+		err := aggregator.processRow(getIndexIOWaitsRawMetric, perfSchemaIndexWaitsRows, aggregatedStats)
+
+		if err != nil {
 			return err
 		}
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsDesc, prometheus.CounterValue, float64(countFetch),
-			objectSchema, objectName, indexName, "fetch",
-		)
-		// We only include the insert column when indexName is NONE.
-		if indexName == "NONE" {
-			ch <- prometheus.MustNewConstMetric(
-				performanceSchemaIndexWaitsDesc, prometheus.CounterValue, float64(countInsert),
-				objectSchema, objectName, indexName, "insert",
-			)
-		}
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsDesc, prometheus.CounterValue, float64(countUpdate),
-			objectSchema, objectName, indexName, "update",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsDesc, prometheus.CounterValue, float64(countDelete),
-			objectSchema, objectName, indexName, "delete",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsTimeDesc, prometheus.CounterValue, float64(timeFetch)/picoSeconds,
-			objectSchema, objectName, indexName, "fetch",
-		)
-		// We only update write columns when indexName is NONE.
-		if indexName == "NONE" {
-			ch <- prometheus.MustNewConstMetric(
-				performanceSchemaIndexWaitsTimeDesc, prometheus.CounterValue, float64(timeInsert)/picoSeconds,
-				objectSchema, objectName, indexName, "insert",
-			)
-		}
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsTimeDesc, prometheus.CounterValue, float64(timeUpdate)/picoSeconds,
-			objectSchema, objectName, indexName, "update",
-		)
-		ch <- prometheus.MustNewConstMetric(
-			performanceSchemaIndexWaitsTimeDesc, prometheus.CounterValue, float64(timeDelete)/picoSeconds,
-			objectSchema, objectName, indexName, "delete",
-		)
 	}
+
+	aggregator.sendMetrics(ch, aggregatedStats, indexIoWaitsMetrics[0:])
+
 	return nil
 }
 

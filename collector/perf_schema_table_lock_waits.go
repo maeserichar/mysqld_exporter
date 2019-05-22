@@ -115,7 +115,7 @@ func (ScrapePerfTableLockWaits) Version() float64 {
 	return 5.6
 }
 
-func getLockWaitsRawMetric(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, error) {
+func getLockWaitsRawMetric(perfSchemaTableLockWaitsRows *sql.Rows) (TableStats, error) {
 	var (
 		objectSchema               string
 		objectName                 string
@@ -165,7 +165,7 @@ func getLockWaitsRawMetric(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, 
 		&timeWriteNormal,
 		&timeWriteExternal,
 	); err != nil {
-		return tableStats{}, err
+		return TableStats{}, err
 	}
 
 	stats := make(map[string]float64)
@@ -231,7 +231,7 @@ func getLockWaitsRawMetric(perfSchemaTableLockWaitsRows *sql.Rows) (tableStats, 
 	stats["writeExternalTime"] = float64(timeWriteExternal) / picoSeconds
 	labels["writeExternalTime"] = []string{"write"}
 
-	return tableStats{objectSchema, objectName, stats, labels}, nil
+	return TableStats{objectSchema, objectName, nil, stats, labels}, nil
 }
 
 // Scrape collects data from database connection and sends it over channel as prometheus metric.
@@ -242,8 +242,8 @@ func (ScrapePerfTableLockWaits) Scrape(ctx context.Context, db *sql.DB, ch chan<
 	}
 	defer perfSchemaTableLockWaitsRows.Close()
 
-	aggregator := TableAggregator{*Regex, *Substitution}
-	aggregatedStats := make(map[string]tableStats)
+	aggregator := NewTableAggregator(*Regex, *Substitution)
+	aggregatedStats := make(map[string]TableStats)
 
 	for perfSchemaTableLockWaitsRows.Next() {
 		err := aggregator.processRow(getLockWaitsRawMetric, perfSchemaTableLockWaitsRows, aggregatedStats)

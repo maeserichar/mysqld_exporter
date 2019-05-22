@@ -6,22 +6,34 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/alecthomas/kingpin.v2"
-
-	// TODO: Remove
-	"fmt"
 )
 
 var (
+	// Regex the regular expression used for renaming the tables.
 	Regex = kingpin.Flag(
 		"aggregate_table_metrics.regex",
 		"Regex with capture groups for renaming the tables",
 	).Default("(.*)").String()
 
+	// Substitution The substitution expression used for renaming tables.
 	Substitution = kingpin.Flag(
 		"aggregate_table_metrics.substitution",
 		"Substitution string to apply to the table name",
 	).Default("$1").String()
+
+	defaultKeyProvider = func(stats TableStats) string {
+		return stats.schema + "." + stats.name
+	}
 )
+
+// TableStats A struct that contains the set of metrics for a schema.table
+type TableStats struct {
+	schema       string
+	name         string
+	commonLabels []string
+	metrics      map[string]float64
+	labels       map[string][]string
+}
 
 // MetricsDefinition A struct that contains the definition of a metric
 type MetricsDefinition struct {
@@ -34,10 +46,16 @@ type MetricsDefinition struct {
 type TableAggregator struct {
 	regex        string
 	substitution string
+	keyProvider  func(stats TableStats) string
 }
 
-func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows *sql.Rows) (tableStats, error),
-	rows *sql.Rows, aggregatedStats map[string]tableStats) error {
+// NewTableAggregator Constructor method that uses the default key provider (schema.table)
+func NewTableAggregator(regex string, substitution string) TableAggregator {
+	return TableAggregator{regex, substitution, defaultKeyProvider}
+}
+
+func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows *sql.Rows) (TableStats, error),
+	rows *sql.Rows, aggregatedStats map[string]TableStats) error {
 
 	tempStats, err := f(rows)
 
@@ -45,15 +63,13 @@ func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows
 		return err
 	}
 
-	fmt.Print(ta.regex)
-
 	tableNameRegex := regexp.MustCompile(ta.regex)
-	tableName := tableNameRegex.ReplaceAllString(tempStats.name, ta.substitution)
+	tempStats.name = tableNameRegex.ReplaceAllString(tempStats.name, ta.substitution)
 
-	stats, found := aggregatedStats[tempStats.schema+"."+tableName]
+	stats, found := aggregatedStats[ta.keyProvider(tempStats)]
 
 	if !found {
-		stats = tableStats{tempStats.schema, tableName, make(map[string]float64), make(map[string][]string)}
+		stats = TableStats{tempStats.schema, tempStats.name, tempStats.commonLabels, make(map[string]float64), make(map[string][]string)}
 	}
 
 	for k := range tempStats.metrics {
@@ -63,27 +79,34 @@ func (ta TableAggregator) processRow(f func(informationSchemaTableStatisticsRows
 		stats.labels[k] = tempStats.labels[k]
 	}
 
-	aggregatedStats[tempStats.schema+"."+tableName] = stats
+	aggregatedStats[ta.keyProvider(tempStats)] = stats
 
 	return nil
 }
 
 func (TableAggregator) sendMetrics(ch chan<- prometheus.Metric,
-	aggregatedStats map[string]tableStats, metrics []MetricsDefinition) error {
+	aggregatedStats map[string]TableStats, metrics []MetricsDefinition) error {
 	for _, table := range aggregatedStats {
 
 		for _, metric := range metrics {
 
-			labels := []string{table.schema, table.name}
+			if metricValue, ok := table.metrics[metric.name]; ok {
 
-			if len(table.labels[metric.name]) > 0 {
-				labels = append(labels, table.labels[metric.name]...)
+				labels := []string{table.schema, table.name}
+
+				if len(table.commonLabels) > 0 {
+					labels = append(labels, table.commonLabels...)
+				}
+
+				if len(table.labels[metric.name]) > 0 {
+					labels = append(labels, table.labels[metric.name]...)
+				}
+
+				ch <- prometheus.MustNewConstMetric(
+					metric.metricDescription, metric.metricType, float64(metricValue),
+					labels...,
+				)
 			}
-
-			ch <- prometheus.MustNewConstMetric(
-				metric.metricDescription, metric.metricType, float64(table.metrics[metric.name]),
-				labels...,
-			)
 		}
 	}
 
